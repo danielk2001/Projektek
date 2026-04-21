@@ -1,0 +1,412 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Előkészítés
+
+```{r}
+# Véletlenszám generátor beállítása (hogy mindig ugyanazokat az eredményeket kapjuk)
+set.seed(123)
+
+# Szükséges csomag betöltése (korrelált változók generálásához)
+library(MASS)
+```
+
+```{r}
+# SZIMULÁCIÓ PARAMÉTEREI
+
+# Monte Carlo ismétlések száma (hányszor generálunk új adatot minden n-re)
+M <- 1000
+
+# Vizsgált mintanagyságok: 20, 40, 60, ..., 500
+n_grid <- seq(20, 500, by = 20)
+```
+
+# 2. Adatgeneráló függvények (DGP 1, 2, 3)
+
+```{r}
+# ADATGENERÁLÁS DGP 1-3-hoz
+# 
+# Ez a függvény generál adatokat a VALÓDI MODELLBŐL:
+# Y = 0 + 1*X1 + hiba
+# 
+# Tehát csak X1 számít, X2 felesleges!
+#
+# Bemenetek:
+#   n      = hány megfigyelést generálunk
+#   rho    = korreláció X1 és X2 között (0 = függetlenek)
+#   sigma2 = hibatagok varianciája (zaj mértéke)
+
+generate_data <- function(n, rho, sigma2) {
+  
+  # --- X1 és X2 generálása ---
+  
+  if (rho == 0) {
+    # Ha nincs korreláció: X1 és X2 függetlenek
+    x1 <- rnorm(n)  # n darab véletlen szám N(0,1) eloszlásból
+    x2 <- rnorm(n)
+    
+  } else {
+    # Ha van korreláció: korrelált változók generálása
+    # Korrelációs mátrix: [[1, rho], [rho, 1]]
+    Sigma <- matrix(c(1, rho, rho, 1), nrow = 2)
+    X <- mvrnorm(n, mu = c(0, 0), Sigma = Sigma)
+    x1 <- X[, 1]
+    x2 <- X[, 2]
+  }
+  
+  # --- Hibatagok generálása ---
+  eps <- rnorm(n, mean = 0, sd = sqrt(sigma2))
+  
+  # --- VALÓDI MODELL: Y = beta0 + beta1*X1 + hiba ---
+  # Ahol beta0 = 0, beta1 = 1
+  # (X2-t NEM használjuk!)
+  y <- x1 + eps
+  
+  # Visszaadjuk az adatokat listában
+  list(y = y, x1 = x1, x2 = x2)
+}
+```
+
+# 3. Egy Monte Carlo ismétlés (DGP 1, 2, 3)
+
+```{r}
+# EGY MONTE CARLO ISMÉTLÉS
+#
+# Ez a függvény:
+# 1. Generál egy adathalmazt a valódi modellből
+# 2. Illeszti a VALÓDI modellt (csak X1)
+# 3. Illeszti a TÚLILLESZTETT modellt (X1 + X2)
+# 4. Megnézi: melyik IC választja helyesen a valódi modellt?
+#
+# Kimenet: 
+#   TRUE = helyesen a valódi modellt választotta
+#   FALSE = a túlillesztettet választotta
+
+one_replication <- function(n, rho, sigma2) {
+  
+  # Adat generálás
+  dat <- generate_data(n, rho, sigma2)
+  
+  # VALÓDI MODELL illesztése: Y ~ X1
+  m_true <- lm(dat$y ~ dat$x1)
+  
+  # TÚLILLESZTETT MODELL: Y ~ X1 + X2
+  m_over <- lm(dat$y ~ dat$x1 + dat$x2)
+  
+  # Melyik modellt választaná az AIC és BIC?
+  # Ha a valódi modell IC-je kisebb → helyesen választott (TRUE)
+  c(
+    AIC = AIC(m_true) < AIC(m_over),
+    BIC = BIC(m_true) < BIC(m_over)
+  )
+}
+```
+
+# 4. M darab ismétlés futtatása
+
+```{r}
+# M DARAB MONTE CARLO ISMÉTLÉS
+#
+# Ez M-szer lefuttatja az előző függvényt és kiszámolja:
+# Az AIC és BIC hányszor választotta helyesen a valódi modellt?
+#
+# Kimenet: 
+#   Két szám 0 és 1 között (helyes választás aránya)
+#   Pl. 0.75 = az esetek 75%-ában jól választott
+
+mc_run <- function(n, rho, sigma2, M) {
+  
+  # M darab ismétlés
+  res <- replicate(M, one_replication(n, rho, sigma2))
+  
+  # Átlag = helyes választás aránya
+  rowMeans(res)
+}
+```
+
+# 5. Teljes grid futtatása (több n-re)
+
+```{r}
+# TÖBB MINTANAGYSÁGRA FUTTATÁS
+#
+# Ez végigmegy az összes n-en (20, 40, 60, ..., 500)
+# és mindegyikre kiszámolja az AIC/BIC teljesítményét
+
+run_grid <- function(n_grid, rho, sigma2, M) {
+  
+  # Minden n-re futtatjuk a Monte Carlót
+  rates <- sapply(n_grid, function(n) mc_run(n, rho, sigma2, M))
+  
+  # Elnevezés
+  rownames(rates) <- c("AIC", "BIC")
+  rates
+}
+```
+
+# 6. Threshold pont keresése
+
+```{r}
+# THRESHOLD PONT MEGTALÁLÁSA
+#
+# A threshold pont definíciója:
+# A LEGNAGYOBB n, ahol még AIC teljesítménye > BIC teljesítménye
+#
+# Ez azt jelenti: mekkora n-ig tart az AIC előnye?
+
+find_threshold <- function(rates, n_grid) {
+  
+  # Különbség: AIC rate - BIC rate
+  diff <- rates["AIC", ] - rates["BIC", ]
+  
+  # Azok az n-ek indexei, ahol AIC még jobb (pozitív különbség)
+  idx_positive <- which(diff > 0)
+  
+  # Ha nincs ilyen n (BIC mindig jobb volt), akkor NA
+  if (length(idx_positive) == 0) {
+    return(NA)
+  }
+  
+  # A legnagyobb n, ahol AIC még jobb
+  n_grid[max(idx_positive)]
+}
+```
+
+# 7. DGP 1 futtatása: Független változók
+
+```{r}
+# Szimuláció futtatása
+rates_dgp1 <- run_grid(
+  n_grid = n_grid,
+  rho = 0,        # Nincs korreláció
+  sigma2 = 1,     # Normál zajszint
+  M = M
+)
+
+# Threshold meghatározása
+threshold_dgp1 <- find_threshold(rates_dgp1, n_grid)
+
+```
+
+# 8. DGP 2 futtatása: Korrelált változók
+
+```{r}
+# Három korrelációs szintet vizsgálunk
+rho_grid <- c(0.3, 0.6, 0.9)
+
+rates_dgp2 <- list()
+thresholds_dgp2 <- c()
+
+for (i in 1:length(rho_grid)) {
+  rho <- rho_grid[i]
+  
+  
+  # Szimuláció
+  rates_dgp2[[i]] <- run_grid(n_grid, rho = rho, sigma2 = 1, M = M)
+  
+  # Threshold
+  thresholds_dgp2[i] <- find_threshold(rates_dgp2[[i]], n_grid)
+  
+}
+
+names(rates_dgp2) <- paste0("rho_", rho_grid)
+names(thresholds_dgp2) <- paste0("rho_", rho_grid)
+```
+
+# 9. DGP 3 futtatása: Magas zajszint
+
+```{r}
+# Három zajszintet vizsgálunk
+sigma2_grid <- c(1, 2, 4)
+
+rates_dgp3 <- list()
+thresholds_dgp3 <- c()
+
+for (i in 1:length(sigma2_grid)) {
+  s2 <- sigma2_grid[i]
+  
+  # Szimuláció
+  rates_dgp3[[i]] <- run_grid(n_grid, rho = 0, sigma2 = s2, M = M)
+  
+  # Threshold
+  thresholds_dgp3[i] <- find_threshold(rates_dgp3[[i]], n_grid)
+}
+
+names(rates_dgp3) <- paste0("sigma2_", sigma2_grid)
+names(thresholds_dgp3) <- paste0("sigma2_", sigma2_grid)
+```
+
+# 10. DGP 4: Misspecified eset
+```{r}
+# Itt a valódi modell Y = X1 + 0.3*X2 + hiba
+# Ez NEM része a kandidátusoknak!
+
+generate_data_dgp4 <- function(n, rho, sigma2) {
+  
+  if (rho == 0) {
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+  } else {
+    Sigma <- matrix(c(1, rho, rho, 1), nrow = 2)
+    X <- mvrnorm(n, mu = c(0, 0), Sigma = Sigma)
+    x1 <- X[, 1]
+    x2 <- X[, 2]
+  }
+  
+  eps <- rnorm(n, sd = sqrt(sigma2))
+  
+  # VALÓDI DGP: Y = X1 + 0.3*X2 + hiba
+  y <- x1 + 0.3 * x2 + eps
+  
+  list(y = y, x1 = x1, x2 = x2)
+}
+
+# EGY ISMÉTLÉS DGP 4-HEZ
+# Most a "helyes" választás a NAGYOBB modell
+# (mert az közelebb van a valódi DGP-hez)
+
+one_replication_dgp4 <- function(n, rho, sigma2) {
+  
+  dat <- generate_data_dgp4(n, rho, sigma2)
+  
+  # KISEBB modell (alulspecifikált, X2 hiányzik)
+  m_small <- lm(dat$y ~ dat$x1)
+  
+  # NAGYOBB modell (közelebb van a valódihoz)
+  m_large <- lm(dat$y ~ dat$x1 + dat$x2)
+  
+  # "Helyes" választás = nagyobb modellt választja
+  c(
+    AIC = AIC(m_large) < AIC(m_small),
+    BIC = BIC(m_large) < BIC(m_small)
+  )
+}
+
+# Monte Carlo futtatás DGP 4-re
+mc_run_dgp4 <- function(n, rho, sigma2, M) {
+  res <- replicate(M, one_replication_dgp4(n, rho, sigma2))
+  rowMeans(res)
+}
+
+# Grid futtatás DGP 4-re
+run_grid_dgp4 <- function(n_grid, rho, sigma2, M) {
+  rates <- sapply(n_grid, function(n) mc_run_dgp4(n, rho, sigma2, M))
+  rownames(rates) <- c("AIC", "BIC")
+  rates
+}
+```
+
+```{r}
+# DGP 4 futtatása
+rates_dgp4 <- run_grid_dgp4(n_grid, rho = 0, sigma2 = 1, M = M)
+threshold_dgp4 <- find_threshold(rates_dgp4, n_grid)
+```
+
+# 11. Ábrák készítése
+
+### DGP 1 ábra
+
+```{r}
+plot(
+  n_grid, rates_dgp1["AIC", ],
+  type = "l", lwd = 2, col = "blue",
+  ylim = c(0, 1),
+  xlab = "Mintanagyság (n)",
+  ylab = "Valódi modell kiválasztási arány",
+  main = "DGP 1: Független változók"
+)
+lines(n_grid, rates_dgp1["BIC", ], lwd = 2, lty = 2, col = "red")
+
+# Threshold vonal
+if (!is.na(threshold_dgp1)) {
+  abline(v = threshold_dgp1, lty = 3, col = "darkgreen", lwd = 2)
+  text(threshold_dgp1, 0.95, paste("Threshold:", threshold_dgp1), pos = 4)
+}
+
+legend("bottomright", legend = c("AIC", "BIC"), 
+       col = c("blue", "red"), lwd = 2, lty = c(1, 2), bty = "n")
+```
+
+### DGP 2 ábrák
+
+```{r}
+# Három ábra a három korrelációra
+par(mfrow = c(1, 3))
+
+for (i in 1:3) {
+  rho <- rho_grid[i]
+  rates <- rates_dgp2[[i]]
+  threshold <- thresholds_dgp2[i]
+  
+  plot(
+    n_grid, rates["AIC", ],
+    type = "l", lwd = 2, col = "blue",
+    ylim = c(0, 1),
+    xlab = "Mintanagyság (n)",
+    ylab = "Kiválasztási arány",
+    main = paste0("DGP 2: rho = ", rho)
+  )
+  lines(n_grid, rates["BIC", ], lwd = 2, lty = 2, col = "red")
+  
+  if (!is.na(threshold)) {
+    abline(v = threshold, lty = 3, col = "darkgreen", lwd = 2)
+    text(threshold, 0.95, paste("n* =", threshold), pos = 4, cex = 0.8)
+  }
+  
+  legend("bottomright", legend = c("AIC", "BIC"), 
+         col = c("blue", "red"), lwd = 2, lty = c(1, 2), bty = "n", cex = 0.8)
+}
+```
+
+### DGP 3 ábrák
+
+```{r}
+# Három ábra a három zajszintre
+par(mfrow = c(1, 3))
+
+for (i in 1:3) {
+  s2 <- sigma2_grid[i]
+  rates <- rates_dgp3[[i]]
+  threshold <- thresholds_dgp3[i]
+  
+  plot(
+    n_grid, rates["AIC", ],
+    type = "l", lwd = 2, col = "blue",
+    ylim = c(0, 1),
+    xlab = "Mintanagyság (n)",
+    ylab = "Kiválasztási arány",
+    main = paste0("DGP 3: sigma2 = ", s2)
+  )
+  lines(n_grid, rates["BIC", ], lwd = 2, lty = 2, col = "red")
+  
+  if (!is.na(threshold)) {
+    abline(v = threshold, lty = 3, col = "darkgreen", lwd = 2)
+    text(threshold, 0.95, paste("n* =", threshold), pos = 4, cex = 0.8)
+  }
+  
+  legend("bottomright", legend = c("AIC", "BIC"), 
+         col = c("blue", "red"), lwd = 2, lty = c(1, 2), bty = "n", cex = 0.8)
+}
+```
+
+### DGP 4 ábra
+
+```{r}
+par(mfrow = c(1, 1))
+
+plot(
+  n_grid, rates_dgp4["AIC", ],
+  type = "l", lwd = 2, col = "blue",
+  ylim = c(0, 1),
+  xlab = "Mintanagyság (n)",
+  ylab = "Nagyobb modell választási arány",
+  main = "DGP 4: Misspecified eset"
+)
+lines(n_grid, rates_dgp4["BIC", ], lwd = 2, lty = 2, col = "red")
+
+legend("bottomright", legend = c("AIC", "BIC"), 
+       col = c("blue", "red"), lwd = 2, lty = c(1, 2), bty = "n")
+```
+
