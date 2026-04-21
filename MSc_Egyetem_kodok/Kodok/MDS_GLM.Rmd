@@ -1,0 +1,156 @@
+---
+title: "pet_project"
+output: html_document
+
+---
+
+```{r, warning=FALSE,message=FALSE}
+#csomagok betöltése
+
+library(ggplot2)
+library(MASS)
+library(car)
+library(lmtest)
+library(VGAM)
+library(smacof)
+
+#adat file beolvasása
+fraud <- read.csv("~/Desktop/fraudTrain.csv")
+
+```
+
+```{r} 
+#Metrikus MDS
+mfraud <- fraud[fraud$is_fraud==1,] #Adatok szűrése a csalásokra
+
+fraud_mds <- data.frame(mfraud[, c(6,12)])
+
+#500 elemű véletlen minta vételezés 
+set.seed(43)
+mfraud_mds <- fraud_mds[sample(1:nrow(fraud_mds), size = 500, replace = FALSE), ]
+
+sumbygroup <- aggregate(mfraud_mds$amt ~ mfraud_mds$state, data = mfraud_mds, sum) #amt változó államonként csoportosított szummázása
+state <- data.frame(sumbygroup[,1])
+sumbygroup <- sumbygroup[,-1]
+sumbygroup <- data.frame(scale(sumbygroup)) #standardizálás
+
+tav <- as.matrix(dist(sumbygroup)) #tav mártix létrehozása
+mds_metric<- mds(tav, ndim = 2) # metrikus skálázás
+mds_metric$stress 
+
+plot(mds_metric$conf)
+text(mds_metric$conf, labels=state$sumbygroup...1.)
+```
+
+```{r}
+#Nem-Metrikus-MDS
+mds_nonmetric<- mds(tav, ndim = 2, type="ordinal") #nem metrikus (ordinális) skálázás
+mds_nonmetric$stress
+
+plot(mds_nonmetric$conf)
+text(mds_nonmetric$conf, labels=state$sumbygroup...1.)
+```
+
+```{r} 
+#GLM
+# Véletlen minta vételezése (50000 elem)
+set.seed(10000)  
+minta <- fraud[sample(1:nrow(fraud), size = 50000, replace = FALSE), ]
+```
+
+```{r}
+#adattisztítás
+datetime <- minta[,18]
+year <- format(as.Date(datetime, format="%Y-%m-%d"), "%Y") #születési dátumból születési év létrehozása
+
+kor <- 2024-as.integer(year) #születési évből kor változó létrehozása
+
+szurt <- minta[,c (6,16)] 
+szurt$kor <- kor
+sd_szurt <- data.frame(scale(szurt)) #standardizálás
+
+#faktorrá alakítás
+sd_szurt$y <- as.factor(minta[,23])
+sd_szurt$gender <- as.factor(minta[,9])
+sd_szurt$state <- as.factor(minta[,12])
+sd_szurt$job <- as.factor(minta[,17])
+sd_szurt$category <- as.factor(minta[,5])
+
+korr<- cor(sd_szurt[,1:3]) #korrelációs mátrix 
+corrplot::corrplot(korr)
+
+summary(sd_szurt)
+```
+
+```{r}
+#diszkrét GLM 
+
+# logit modell futtátása (is_fraud bin kimenetelű eredményváltozó, regresszorok: kor, gender, city_pop, amt, category)
+logit_model <- glm(y ~ kor + gender + city_pop + amt + category, 
+                   data = sd_szurt, 
+                   family = binomial(link = "logit"))
+ 
+table(minta$category) # a referencia kategória az entertainment
+summary(logit_model)
+logit_model$aic 
+
+```
+
+```{r}
+#Folytonos GLM
+
+# Véletlen minta vételezése (10000 elem)
+set.seed(460)
+fminta <- fraud[sample(1:nrow(fraud), size = 10000, replace = FALSE), ]
+
+```
+
+```{r}
+#adattisztítás, faktor változókká alakítás
+fszurt <- data.frame(fminta[,6])
+fszurt$is_fraud <- as.factor(fminta[,23])
+fszurt$category <- as.factor(fminta[,5])
+fszurt$gender <- as.factor(fminta[,9])
+fszurt$city_pop <- fminta[,16]
+fszurt <- fszurt[,-1]
+fszurt$y <- fminta[,6]
+
+datetime <- fminta[,18]
+year2 <- format(as.Date(datetime, format="%Y-%m-%d"), "%Y") #születési dátumból születési év létrehozása
+
+kor2 <- 2024-as.integer(year2) #születési évből kor változó létrehozása
+fszurt$kor <- kor2
+```
+
+```{r}
+#gamma modell futtatása, amt eredményváltozó, regresszorok: kor, gender, city_pop, is_fraud, category
+gamma_model <- glm(y ~ kor + gender + city_pop + is_fraud + category, 
+                   data = fszurt, 
+                   family = Gamma(link = "log"))
+summary(gamma_model)
+```
+
+```{r}
+#gaus modell futtatása amt eredményváltozó, regresszorok: kor, gender, city_pop, is_fraud, category
+gaus <- glm(y ~ kor + gender + city_pop + is_fraud + category, 
+                   data = fszurt, 
+                   family = gaussian(link = "log"))
+summary(gaus)
+
+```
+
+```{r}
+#pareto modell futtatása, amt eredményváltozó, regresszorok: kor, gender, city_pop, is_fraud, category
+pareto <- vglm(y~kor + gender + city_pop + is_fraud + category, paretoff, data = fszurt)
+summary(pareto)
+AIC(pareto)
+```
+
+```{r}
+# folytonos modellek összehasonlítása BIC alapján 
+BIC(gamma_model)
+BIC(gaus)
+BIC(pareto)
+
+# gamma a  legjobb, mivel BIC  a legalacsonyabb
+```

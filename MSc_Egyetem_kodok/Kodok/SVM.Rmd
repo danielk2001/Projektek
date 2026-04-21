@@ -1,0 +1,117 @@
+```{r, warning=FALSE,message=FALSE}
+#csomagok betöltése
+
+library(e1071)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(kernlab)
+
+#adat file beolvasása
+iris1 <- iris
+```
+
+```{r}
+virag <- iris1[iris1$Species != "versicolor", ] #szűrés 2 kategóriára
+virag$Species <- droplevels(virag$Species) #factor level csökkentése  
+```
+
+```{r}
+#adattisztítás
+szurt <- data.frame(scale(virag[,c (1,2,3,4)]))
+
+szurt$y <- data.frame(virag[,5])
+
+szurt <- (data.frame(szurt, y= ifelse(szurt$y=="setosa",1,-1))) #eredményváltozó -1, 1 kódolása
+
+szurt <- szurt[,-5]
+szurt <- szurt %>% rename(y = virag...5.)
+```
+
+```{r}
+#lineáris svm futtatása
+svm <- svm(as.factor(y)~Petal.Length+Sepal.Width, data = szurt, kernel="linear") 
+plot(svm, Petal.Length~Sepal.Width, data = szurt, grid = 1000, svSymbol ="o") 
+
+```
+
+```{r}
+#lineáris svm, c=10 költségparaméterrel
+svm0 <- svm(as.factor(y)~Petal.Length+Sepal.Width, data = szurt, kernel="linear", cost=10) 
+plot(svm0, Petal.Length~Sepal.Width, data = szurt, grid = 1000, svSymbol ="o") 
+
+```
+
+```{r}
+#radiális svm futtatása c=10 költségparaméterrel
+svm1 <- svm(as.factor(y)~Petal.Length+Sepal.Width, data = szurt, kernel="radial", cost=10) 
+plot(svm1, Petal.Length~Sepal.Width, data = szurt, grid = 1000, svSymbol ="o") 
+```
+
+```{r}
+#hangolás_1.0
+#keresztvalidáció, rács létrehozása
+set.seed(33)
+keresztval <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+#hiperparaméterek értékei
+racs0 <- expand.grid(C=2^(-6:6), sigma=2^(-6:6))
+
+
+#hangolás
+hang0 <- train(as.factor(y)~., data = szurt, trControl = keresztval, tuneGrid=racs0, method="svmRadial" )
+
+eredmeny0 <- hang0$results
+
+ggplot(eredmeny0, aes(x=as.factor(C), y=as.factor(sigma), fill=Accuracy))+geom_tile()
+```
+
+```{r}
+#hangolás_2.0
+#keresztvalidáció, rács létrehozása
+
+set.seed(33)
+keresztval <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+#hiperparaméterek értékei
+racs1 <- expand.grid(C=2^(-4:4), sigma=2^(-4:4))
+
+
+#hangolás
+hang1 <- train(as.factor(y)~., data = szurt, trControl = keresztval, tuneGrid=racs1, method="svmRadial" )
+
+eredmeny1 <- hang1$results
+
+ggplot(eredmeny1, aes(x=as.factor(C), y=as.factor(sigma), fill=Accuracy))+geom_tile()
+```
+
+```{r}
+
+#hangolás_3.0
+#keresztvalidáció, rács létrehozása
+
+set.seed(33)
+keresztval <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+
+#hiperparaméterek értékei
+racs2 <- expand.grid(C=2^seq(from=-2, to=2, by=0.125), sigma=2^(-2.5:1))
+
+
+#hangolás
+hang2 <- train(as.factor(y)~., data = szurt, trControl = keresztval, tuneGrid=racs2, method="svmRadial" )
+
+eredmeny2 <- hang2$results
+
+ggplot(eredmeny2, aes(x=as.factor(C), y=as.factor(sigma), fill=Accuracy))+geom_tile()
+```
+
+```{r}
+#svm futtatása legjobb hiperpareméterekkel
+svm_legjobb <- svm(as.factor(y)~., data = szurt, kernel="radial", cost=	
+0.2726269, sigma=0.1767767)
+plot(svm_legjobb, Petal.Length~Sepal.Width, data = szurt, grid = 1000, svSymbol = "o")
+
+#predikció
+pred <- predict(svm_legjobb, szurt)
+print(pred)
+```
