@@ -1,0 +1,158 @@
+
+```{r}
+library(ggplot2)
+library(timetk)
+library(gridExtra)
+library(tidyr)
+library(readr) # read csv
+library(dplyr) # data manipulation
+library(timetk) # Time series plots
+library(ggplot2) # data vizualization
+library(patchwork) #multiple plots
+library(cowplot)
+library(tidyquant)
+```
+
+```{r}
+#LC Evaluation
+#Load raw data
+test_long <- read.csv("~/Desktop/TDK/output_2005_split/LC_forecasts.csv")
+
+# Load train long from LC_main_models.R file
+```
+
+```{r}
+#LL Evaluation
+#Load raw data
+test_long <- read.csv("~/Desktop/TDK/output_2005_split/LL_forecasts.csv")
+
+# Load train long from LL_main_models.R file
+```
+
+***Plot log mortality rates and forecasts at different Ages and countires ***
+```{r}
+#Load train_long and test_long data frames before using this function!
+
+plot_lmxt <- function(count, spec_Age){
+
+  train_plot <- train_long %>% dplyr::filter(states==count, Age==spec_Age) %>% dplyr::select(year, states, lmxt)
+
+  train_plot$lmxt_rwd <- train_plot$lmxt
+  train_plot$lmxt_arima <- train_plot$lmxt
+  train_plot$lmxt_var <- train_plot$lmxt
+  train_plot$lmxt_sdpd <- train_plot$lmxt
+  train_plot$lmxt_gmm_lsdplm <- train_plot$lmxt
+  train_plot$lmxt_gmm_sdplm <- train_plot$lmxt
+  train_plot$lmxt_estf <- train_plot$lmxt
+  train_plot$lmxt_starima <- train_plot$lmxt
+  train_plot$lmxt_dplm <- train_plot$lmxt
+  
+  test_plot <- test_long %>%
+    dplyr::filter(states==count, Age==spec_Age) %>%
+    dplyr::select(year,
+           states,
+           lmxt,
+           lmxt_rwd,
+           lmxt_arima,
+           lmxt_starima,
+           lmxt_var,
+           lmxt_dplm,
+           lmxt_sdpd,
+           lmxt_gmm_lsdplm,
+           lmxt_gmm_sdplm,
+           lmxt_estf)
+  
+  plot_df<-rbind(train_plot, test_plot)
+  
+  plot_df$RWD <-plot_df$lmxt_rwd
+  plot_df$ARIMA <-plot_df$lmxt_arima
+  plot_df$STARIMA <-plot_df$lmxt_starima
+  plot_df$VAR <-plot_df$lmxt_var
+  plot_df$DPLM <-plot_df$lmxt_dp
+  plot_df$SDP <-plot_df$lmxt_sdpd
+  plot_df$ESTF <-plot_df$lmxt_estf
+  plot_df$SDPLM_GMM <-plot_df$lmxt_gmm_sdplm
+  plot_df$LSDPLM_GMM <-plot_df$lmxt_gmm_lsdplm
+            
+  lw=0.75
+  
+  ggplot()+
+    geom_line(data=plot_df, aes(y = lmxt_rwd, x = year, colour = "RWD"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_arima, x = year, colour = "ARIMA"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_var, x = year, colour = "VAR"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_starima, x = year, colour = "STARIMA"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_dplm, x = year, colour = "DPLM"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_sdpd, x = year, colour = "SDPLM_QML"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_gmm_sdplm, x = year, colour = "SDPLM_GMM"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_gmm_lsdplm, x = year, colour = "LSDPLM_GMM"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt_estf, x = year, colour = "ESTF"), linewidth=lw, linetype = "solid") +
+    geom_line(data=plot_df, aes(y = lmxt, x = year, colour = "lmxt"), linewidth=lw, linetype = "solid")+
+    ggtitle(paste(count, "- Age:", spec_Age))+
+    labs(y="log mortality rate") +
+    labs(color = "") +  # Custom legend title
+    scale_color_manual(
+      name = "Legend",
+      values = c(
+  "RWD" = "#E41A1C",              # strong red
+  "ARIMA" = "#377EB8",            # vivid blue
+  "VAR" = "#4DAF4A",              # bright green
+  "SDPLM_QML" = "#984EA3",        # purple
+  "SDPLM_GMM" = "#FF7F00",        # orange
+  "LSDPLM_GMM" = "#7FFF00",       # bright yellow
+  "STARIMA" = "#A65628",          # brown (kept but darker)
+  "DPLM" = "#00CED1",             # dark turquoise (distinct from blue)
+  "ESTF" = "#FF1493",             # deep pink
+  "lmxt" = "blue" 
+)) +
+    theme_tq() +
+    theme(
+      legend.position = "right",
+      text = element_text(size = 14),  # Adjust the overall text size
+      axis.title = element_text(size = 16),  # Adjust axis titles size
+      axis.text = element_text(size = 16),  # Adjust axis labels size
+      plot.title = element_text(size = 25),  # Adjust plot title size
+      legend.text = element_text(size = 16)   # Adjust plot title size
+    )
+}
+```
+
+```{r}
+countr <- "LA"
+
+# Assuming that your plots are stored in p1, p2, and p3
+p1<-plot_lmxt(count=countr, spec_Age=40)
+p2<-plot_lmxt(count=countr, spec_Age=60)
+p3<-plot_lmxt(count=countr, spec_Age=80)
+
+p3 <- p3
+
+# Create a custom legend
+common_legend <- get_legend(p3)
+
+# Set the legend position to "right" for each plot
+p1 <- p1 + theme(legend.position = "none")
+p2 <- p2 + theme(legend.position = "none")
+p3 <- p3 + theme(legend.position = "none")
+
+# Plot the grid with a single legend on the right side
+p <- grid.arrange(p1, p2, p3, common_legend, ncol = 4, widths = c(1.2, 1.2, 1.2, 0.5))
+p
+```
+
+```{r}
+#Save LC diagrams
+setwd("~/Desktop/TDK/mxt_predict_diagrams")
+ggsave(p, 
+       filename = paste(countr, "_lc_fc.png", sep=""),
+       device = "png",
+       height = 5, width = 18, units = "in")
+```
+
+```{r}
+#Save LL diagrams
+setwd("~/Desktop/TDK/mxt_predict_diagrams")
+ggsave(p, 
+       filename = paste(countr, "_ll_fc.png", sep=""),
+       device = "png",
+       height = 5, width = 18, units = "in")
+```

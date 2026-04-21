@@ -1,0 +1,73 @@
+
+Y-axis barplot by LC and LL seperatly for MAU and MMU
+```{r}
+library(tidyverse)
+library(patchwork)
+
+# Read data
+df <- MAU_MMU_LL %>% filter(!name %in% c("ENSEMBLE_SIMPLE_MEAN", "ENSEMBLE_TRIMMED_MEAN"))
+
+# Prepare data
+df2 <- df %>%
+  select(name, MAU, MMU) %>%
+  mutate(
+    model = case_when(
+      str_ends(name, "_LC") ~ "LC",
+      str_ends(name, "_LL") ~ "LL",
+      TRUE ~ NA_character_
+    ),
+    technique = str_remove(name, "_LC$|_LL$")
+  )
+
+# Technique order (adjust if needed)
+technique_order <- c(
+  "RWD", "ARIMA", "DPLM", "VAR", "STARIMA",
+  "SDPLM_QML", "SDPLM_GMM", "LSDPLM_GMM", "ESTF"
+)
+all_techs <- unique(df2$technique)
+technique_order <- c(intersect(technique_order, all_techs),
+                     setdiff(all_techs, technique_order))
+
+# Long format
+plot_df <- df2 %>%
+  pivot_longer(cols = c(MAU, MMU), names_to = "metric", values_to = "value") %>%
+  mutate(
+    technique = factor(technique, levels = rev(technique_order)),
+    metric = factor(metric, levels = c("MAU", "MMU")),
+    model = factor(model, levels = c("LC", "LL")),
+    label = formatC(value, format = "f", digits = 4)
+  )
+
+# Parameters
+dodge_width <- 0.8
+label_margin <- 0.0015
+x_limit <- 0.03
+
+make_panel <- function(df_model, model_name) {
+  ggplot(df_model, aes(y = technique, x = value, fill = metric, group = metric)) +
+    geom_col(position = position_dodge2(width = dodge_width), width = 0.7) +
+    geom_text(
+      aes(x = -label_margin, label = label),
+      position = position_dodge2(width = dodge_width),
+      hjust = 1,
+      size = 3
+    ) +
+    scale_fill_manual(values = c(MAU = "blue", MMU = "red"),
+                      name = "Metric") +
+    coord_cartesian(xlim = c(-label_margin * 2.3, x_limit)) +
+    scale_x_continuous(
+      breaks = seq(0, x_limit, by = 0.01),
+      labels = scales::label_number(accuracy = 0.01)
+    ) +
+    labs(x = "Metric value", y = NULL, title = model_name) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      legend.position = "bottom"
+    )
+}
+
+p_lc <- make_panel(plot_df, "LL")
+print(p_lc)
+
+```

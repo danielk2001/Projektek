@@ -1,0 +1,267 @@
+---
+title: "USA_LC_models"
+output: html_document
+date: "2025-10-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Data preprocess
+library(dplyr)
+library(readxl)
+
+# LC model
+library(demography)
+library(StMoMo)
+
+# Forecast
+library(forecast)
+
+# VAR dependencies
+library(remotes)
+remotes::install_github("cran/picasso")
+remotes::install_github("svazzole/sparsevar")
+library(sparsevar)
+
+#spVAR dependencies
+library(dplyr)
+library(tidyr)
+library(plm)
+library(Matrix)
+
+# SDPD dependencies
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(sf)
+library(spdep)
+library(cepiigeodist)
+library(Matrix)
+
+# SARIMA dependencies
+remotes::install_github("ropensci/rnaturalearthhires")
+library(starma)
+
+# ESTF dependencies
+library(Matrix)
+library(MASS)
+library(glmnet)
+library(bigstep)
+
+#DPLM
+library(plm)
+library(fastDummies)
+```
+
+Define global variables
+```{r}
+states <- c("AL","AR","AZ","CA","CO","CT","DE","FL","GA","IA", "ID",
+            "IL","IN","KS","KY","LA","MA", "MD","ME","MI", "MN",
+            "MO","MS","MT","NC", "ND", "NE","NH","NJ","NM","NV","NY",
+            "OH","OK","OR","PA","RI","SC","SD","TN", "TX","UT",
+            "VA","VT","WA","WI","WV","WY")
+
+min_year_global <- 1969
+max_year_global <- 2019
+```
+
+Load LC parameters
+```{r}
+setwd("~/Desktop/TDK/OLD_outputs/output_2005_split_newest_old/")
+kt <- read.csv("LeeCarter_SVD_Kappat_dt_Total.csv")
+ax <- read.csv("LeeCarter_ax_SVD_dt_Total.csv")
+bx <- read.csv("LeeCarter_bx_SVD_dt_Total.csv")
+```
+
+Load raw data
+```{r}
+#Run code chunk regarding mx data in the LC_prep file to get the mortality_data variable used here!
+mortality_data$mx <- log(mortality_data$mx) 
+mortality_data <- mortality_data %>% 
+  rename(lmxt = mx)
+
+mortality_data <- mortality_data %>% 
+  rename(year = Year)
+
+results_list <- list()
+mse_results_list <- list()
+
+train_test_border <- 2005
+num_steps_fc <- max_year_global-train_test_border+1
+
+```
+
+Define data frames
+```{r}
+test_long <- mortality_data %>% filter(year >= train_test_border)
+train_long <- mortality_data %>%  filter(year < train_test_border) 
+
+results_df_long <- test_long # Ezt fogjuk feltölteni a modellek predikcióival.
+```
+
+Models
+```{r} 
+#RWD
+print("Forecast with RWD")
+
+x_rwd_results <- RWD_FC(ax=ax,
+                        bx=bx,
+                        kt=kt,
+                        train_data=train_long,
+                        test_data=results_df_long,
+                        num_steps_fc,
+                        jumpoff=TRUE,
+                        param=NULL)
+
+#ARIMA
+print("Forecast with ARIMA")
+
+x_arima_results <- ARIMA_FC(ax=ax,
+                            bx=bx,
+                            kt=kt,
+                            train_data=train_long,
+                            test_data=results_df_long,
+                            num_steps_fc,
+                            jumpoff=TRUE)
+
+
+#VAR
+print("Forecast with VAR")
+
+x_var_results <- VAR_FC(ax=ax,
+                        bx=bx,
+                        kt=kt,
+                        train_data=train_long,
+                        test_data=results_df_long,
+                        num_steps_fc,
+                        jumpoff=TRUE,
+                        opt=TRUE,
+                        difference=TRUE)
+
+#DPLM
+print("Forecast with DPLM")
+
+x_dplm_results <- DPLM_FC(ax=ax,
+                           bx=bx,
+                           kt=kt,
+                            train_data=train_long,
+                            test_data=results_df_long,
+                            num_steps_fc,
+                            jumpoff=TRUE,
+                            opt=TRUE,
+                            difference=TRUE)
+
+
+#SDPD
+print("Forecast with SDPD")
+
+x_sdpd_results <- SDPD_FC(ax=ax,
+                           bx=bx,
+                           kt=kt,
+                           train_data=train_long,
+                           test_data=results_df_long,
+                           num_steps_fc,
+                           jumpoff=TRUE,
+                           opt=TRUE,
+                           W_tpye_param='Neighbour',
+                           difference=TRUE)
+
+
+#STARIMA
+print("Forecast with STARIMA")
+
+x_starima_results <- STARIMA_FC(ax=ax,
+                              bx=bx,
+                              kt=kt,
+                              train_data=train_long,
+                              test_data=results_df_long,
+                              num_steps_fc,
+                              jumpoff=TRUE,
+                              opt=TRUE,
+                              difference=TRUE)
+
+#ESTF 
+print("Forecast with ESTF")
+
+x_estf_results <- ESTF_FC(ax=ax,
+                           bx=bx,
+                           kt=kt,
+                           train_data=train_long,
+                           test_data=results_df_long,
+                           num_steps_fc,
+                           jumpoff=TRUE,
+                           selected_models=c(1,2,5,6),
+                           difference=TRUE)
+
+```
+
+Results
+```{r}
+### Combine results
+results_df_long <- cbind(results_df_long,
+                         lmxt_rwd = x_rwd_results$test_data$lmxt_rwd,
+                         error_rwd = x_rwd_results$test_data$error_rwd,
+                         lmxt_arima = x_arima_results$test_data$lmxt_arima,
+                         error_arima = x_arima_results$test_data$error_arima,
+                         lmxt_var = x_var_results$test_data$lmxt_var,
+                         error_var = x_var_results$test_data$error_var,
+                         lmxt_dplm = x_dplm_results$test_data$lmxt_dplm,
+                         error_dplm = x_dplm_results$test_data$error_dplm,
+                         lmxt_sdpd = x_sdpd_results$test_data$lmxt_sdpd,
+                         error_sdpd= x_sdpd_results$test_data$error_sdpd,
+                         lmxt_starima = x_starima_results$test_data$lmxt_starima,
+                         error_starima = x_starima_results$test_data$error_starima,
+                         lmxt_estf = x_estf_results$test_data$lmxt_estf,
+                         error_estf = x_estf_results$test_data$error_estf,
+                         lmxt_gmm_lsdplm = x_gmm_lsdplm_results$test_data$lmxt_gmm_lsdplm,
+                         error_gmm_lsdplm = x_gmm_lsdplm_results$test_data$error_gmm_lsdplm,
+                         lmxt_gmm_sdplm = x_gmm_sdplm_results$test_data$lmxt_gmm_sdplm,
+                         error_gmm_sdplm = x_gmm_sdplm_results$test_data$error_gmm_sdplm
+                         )
+
+# Ensemble
+print("Forecast with Ensemble")
+results_df_long <- ENSEMBLE_FC(test_data=results_df_long)
+
+# Organize the results
+mse <- results_df_long %>% 
+  group_by(states) %>%
+  summarize(RWD = mean(error_rwd**2),
+            ARIMA = mean(error_arima**2),
+            STARIMA = mean(error_starima**2),
+            VAR = mean(error_var**2),
+            SDPLM_QML = mean(error_sdpd**2),
+            ESTF = mean(error_estf**2),
+            ENSEMBLE_SIMPLE_MEAN= mean(error_ensemble_simple_mean**2),
+            ENSEMBLE_TRIMMED_MEAN= mean(error_ensemble_trimmed_mean**2),
+            DPLM = mean(error_dplm**2),
+            SDPLM_GMM = mean(error_gmm_sdplm**2),
+            LSDPLM_GMM = mean(error_gmm_lsdplm**2)
+  ) %>%
+  print(n = length(states))
+
+mse$winner_model <- names(mse)[as.matrix(apply(mse[,2:ncol(mse)], 1, which.min))+1]
+
+# Best models
+mse_results_list <- mse %>%
+  group_by(winner_model) %>%
+  count() %>%
+  arrange(desc(n))
+```
+
+Save final results
+```{r}
+write.csv(results_df_long,
+          "~/Desktop/TDK/output/LC_forecasts.csv",
+          row.names=FALSE)
+
+write.csv(mse_results_list,
+          "~/Desktop/TDK/output/LC_aggregated_results.csv",
+          row.names=FALSE)
+
+write.csv(mse,
+          "~/Desktop/TDK/output/LC_mse_by_states.csv",
+          row.names=FALSE)
+```

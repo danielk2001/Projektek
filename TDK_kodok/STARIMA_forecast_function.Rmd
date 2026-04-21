@@ -1,0 +1,120 @@
+
+```{r}
+forecastStarma <- function(data_long, year_col_name, country_col_name, variable_name, model, wlist, num_steps_fc, l, p, difference){
+  
+  st_data <- dataPreparationStarima(data_long = data_long, year_col_name = year_col_name, country_col_name = country_col_name, variable_name = variable_name, difference = difference)
+  
+  st_helper <- matrix(0, ncol=num_steps_fc, nrow=nrow(t(st_data)))
+  STARIMA_FC <- cbind(t(st_data), st_helper)
+  
+  year_names <- unique(eval(parse(text = paste0("data_long$", year_col_name))))
+  T <- length(year_names)
+  
+  country_names <- unique(eval(parse(text = paste0("data_long$", country_col_name))))
+  N <- length(country_names)
+  
+  helper_country <- eval(parse(text = paste0("data_long$", country_col_name)))
+  helper_variable <- eval(parse(text = paste0("data_long$", variable_name)))
+  
+  starima_data <- matrix(unlist(split(helper_variable, helper_country)), nrow=T, ncol=N)
+  
+  if (difference == TRUE){
+    
+    starima_data_diff <- as.matrix(sapply(data.frame(starima_data), diff))
+    
+    mean <- mean(starima_data_diff)
+    sd <- sd(starima_data_diff)
+    
+  } else {
+    
+    mean <- mean(starima_data)
+    sd <- sd(starima_data)
+  }
+
+phi_mat <- model$phi
+theta_mat <- model$theta
+
+res_helper <- matrix(0, ncol=num_steps_fc, nrow=nrow(t(model$residuals)))
+resid_mat <- cbind(t(model$residuals), res_helper) #future residuals are treated az zero (from 2005 split year in this case)
+
+for (k in 1:num_steps_fc) {
+  # start accumulation vector
+  acc_ar <- matrix(0, nrow = nrow(t(st_data)), ncol = 1)
+  acc_ma <- matrix(0, nrow = nrow(t(st_data)), ncol = 1)
+  
+  # AR part (phi)
+  if (!(nrow(phi_mat)==0 && ncol(phi_mat)==0)) {
+  for (j in 1:p) {
+      for (i in 1:l) {
+          phi_ji <- model$phi[j, i]
+          if (!is.na(phi_ji) && phi_ji != 0) {
+            acc_ar <- acc_ar + phi_ji * (wlist[[i]] %*% STARIMA_FC[, ncol(t(st_data)) - j + k])
+          }
+      }
+  }
+}
+  
+# MA part (phi)
+  if (!(nrow(theta_mat)==0 && ncol(theta_mat)==0)) {
+  for (j in 1:nrow(theta_mat)) {
+      for (i in 1:ncol(theta_mat)) {
+          theta_ji <- model$theta[j, i]
+          if (!is.na(theta_ji) && theta_ji != 0) {
+            acc_ma <- acc_ma + theta_ji * (wlist[[i]] %*% resid_mat[, ncol(t(model$residuals)) - j + k])
+          }
+      }
+  }
+}
+
+  STARIMA_FC[, ncol(t(st_data)) + k] <- acc_ar + acc_ma + mean(model$residuals, na.rm = TRUE)
+}
+
+  STARIMA_FC <- STARIMA_FC*sd+mean
+  
+  T <- ncol(t(st_data))
+  N <- nrow(t(st_data))
+  
+  if (difference == TRUE){
+    
+    nrow=T+1
+    
+  } else {
+    
+    nrow=T
+  }
+  
+  helper_year <- unique(eval(parse(text = paste0("data_long$", year_col_name))))
+  helper_data <- data.frame(matrix(unlist(split(helper_variable, helper_country)), nrow=nrow, ncol=N))
+  
+  if(difference == TRUE){
+    fc_matrix_no_difference <- matrix(0, ncol=num_steps_fc, nrow = N)
+    fc_matrix_no_difference[,1] <- t(helper_data)[, T+1] + STARIMA_FC[,T+1]
+    
+    for (i in 2:num_steps_fc){
+      fc_matrix_no_difference[,i] <- fc_matrix_no_difference[,i-1] + STARIMA_FC[,T+i]
+    }
+    
+    max_year <- as.numeric(max(helper_year))
+    fc_matrix_no_difference_names <- c((max_year+1):(max_year+num_steps_fc))
+    
+    colnames(fc_matrix_no_difference) <- fc_matrix_no_difference_names
+    rownames(fc_matrix_no_difference) <- colnames(st_data)
+    
+    return(fc_matrix_no_difference)
+    
+  } else {
+    
+    max_year <- as.numeric(max(helper_year))
+    fc_matrix_no_difference_names <- c((max_year+1):(max_year+num_steps_fc))
+    
+    STARIMA_FC_f <- STARIMA_FC[,(T+1):ncol(STARIMA_FC)]
+    
+    colnames(STARIMA_FC_f) <- fc_matrix_no_difference_names
+    rownames(STARIMA_FC_f) <- colnames(st_data)
+    
+    return(STARIMA_FC_f)
+  }
+}
+
+```
+

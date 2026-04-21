@@ -1,0 +1,348 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(demography)
+library(ggplot2)
+library(timetk)
+```
+
+State names list
+```{r}
+
+states <- c("AL","AR","AZ","CA","CO","CT","DE","FL","GA","IA", "ID",
+            "IL","IN","KS","KY","LA","MA", "MD","ME","MI", "MN",
+            "MO","MS","MT","NC", "ND", "NE","NH","NJ","NM","NV","NY",
+            "OH","OK","OR","PA","RI","SC","SD","TN", "TX","UT",
+            "VA","VT","WA","WI","WV","WY")
+
+states_help <- states
+#Alaska es Hawaii-t kivettem mert nincsenek szarazfoldi szomszedos allamaik, tovabbi meg DC is benne volt az adatok kozott igy azt is kivettem mert az nem allam
+```
+
+Global variables
+```{r}
+
+min_year_global <- 1969 #exp szamok 1969-tol indulnak
+max_year_global <- 2019
+
+train_test_border <- 2005
+
+n <- length(states)
+```
+
+
+Create a list from the mx data
+```{r}
+
+states_mx <- paste(states,"_bltper_1x1.txt", sep="")
+
+list_of_path_mx <- file.path("~/Desktop/TDK/bltper_1x1", states_mx)
+
+```
+
+mx
+```{r}
+mx <- list()
+
+for (i in 1:n){
+  name_of_states <- paste("mxt_", states[i], sep='')
+  
+  helper1 = read.table(list_of_path_mx[i], skip = 2, header=T) 
+  
+   helper1 = helper1 %>%
+    filter(Age != "110+") %>%
+    filter(Year >= min_year_global & Year <= max_year_global)
+  
+  helper1$Age = as.numeric(helper1$Age)
+  helper1$Year = as.numeric(helper1$Year)
+  
+  helper1 = helper1 %>%
+    filter(Age <= 89)
+  
+  mx[[i]] <- helper1[, c("Year", "Age", "mx")]
+}
+
+names(mx) = paste("mxt_", states, sep='')
+```
+
+exp
+source:
+https://seer.cancer.gov/popdata/download.html#single
+https://seer.cancer.gov/popdata/popdic.html
+```{r}
+exp_data <- "~/Desktop/TDK/us.1969_2023.singleages.through89.90plus.adjusted.txt"
+
+Exp <- read.table(exp_data, stringsAsFactors = FALSE, colClasses = "character", fill = TRUE)
+
+Year_chr         <- substr(Exp$V1, 1, 4)
+State            <- substr(Exp$V1, 5, 6)
+State_FIPS_chr  <- substr(Exp$V1, 7, 8)
+County_FIPS_chr <- substr(Exp$V1, 9, 11)
+Race_chr        <- substr(Exp$V2, 1, 1)
+Origin_chr      <- substr(Exp$V2, 2, 2)
+Sex_chr          <- substr(Exp$V2, 3, 3)
+Age_chr          <- substr(Exp$V2, 4, 5)
+Pop_chr          <- substr(Exp$V2, 6, 14)
+
+Year         <- as.integer(Year_chr)
+State_FIPS  <- as.integer(State_FIPS_chr)
+County_FIPS <- as.integer(County_FIPS_chr)
+Race        <- as.integer(Race_chr)
+Origin      <- as.integer(Origin_chr)
+Sex          <- as.integer(Sex_chr)
+Age          <- as.integer(Age_chr)
+Pop          <- as.integer(Pop_chr)
+
+Exp<- data.frame(
+  State = State,
+  State_FIPS = State_FIPS,
+  Year = Year,
+  County_FIPS = County_FIPS,
+  Race = Race,
+  Origin = Origin,
+  Sex = Sex,
+  Age = Age,
+  Pop = Pop,
+  stringsAsFactors = FALSE
+)
+
+Exp <- Exp[Exp$Year <= 2019 & Exp$Age <= 89 & Exp$State !="AK" & Exp$State !="HI" & Exp$State !="DC" & Exp$State !="KR",]
+
+# Aggregate: sum population across sexes for each Year x State x Age
+Exp <- aggregate(Pop ~  State + Year + Age, data = Exp, FUN = function(x) sum(x, na.rm = TRUE))
+unique(Exp$State)
+# sort result
+Exp <- Exp[order(Exp$State, Exp$Year, Exp$Age), ]
+#sub state sorting
+exposures <- list()
+
+for(s in states){
+  sub <- Exp[Exp$State == s, c("Year","Age","Pop")]
+  exposures[[s]] <- sub
+}
+
+names(exposures) = paste("exp_", states, sep='')
+```
+
+
+```{r}
+mortality_data_raw <- bind_rows(mx, .id = "state")
+mortality_data_raw <- mortality_data_raw %>%
+  mutate(state = sub("^mxt_", "", state))                  
+
+mortality_data_raw <- mortality_data_raw %>% 
+  rename(states = state)
+
+#num_steps_fc <- max_year_global-train_test_border+1
+
+helper <- mortality_data_raw
+helper$exp <- Exp$Pop
+helper$dx <- helper$mx*helper$exp+0.5
+helper$mx <- helper$dx/helper$exp
+
+mortality_data <- helper[,c(1,2,3,4)]
+
+mx_new <- list()
+
+for (i in 1:n){
+  name_of_states <- paste("mxt_", states[i], sep='')
+  
+  mortality_data_help = mortality_data[mortality_data$states == states_help[i],]
+  
+  mx_new[[i]] <- mortality_data_help[, c("Year", "Age", "mx")]
+}
+
+names(mx_new) = paste("mxt_", states_help, sep='')
+
+```
+
+
+mx Train and test set
+```{r}
+mx_train_LC <- list()
+mx_test_LC <- list()
+
+for (i in 1:n){
+ 
+  mx_train_LC[[i]] <- mx_new[[i]] %>% filter(Year < train_test_border)
+  mx_test_LC[[i]] <- mx_new[[i]] %>% filter(Year >= train_test_border)
+}
+
+names(mx_train_LC) = paste("mxt_train_LC_", states, sep='')
+names(mx_test_LC) = paste("mxt_test_LC_", states, sep='')
+
+```
+
+exp Train and test set
+```{r}
+
+exp_train_LC <- list()
+exp_test_LC <- list()
+
+for (i in 1:n){
+  
+  exp_train_LC[[i]] <- exposures[[i]] %>% filter(Year < train_test_border)
+  exp_test_LC[[i]] <- exposures[[i]] %>% filter(Year >= train_test_border)
+}
+
+names(exp_train_LC) = paste("Ext_train_LC_", states, sep='')
+names(exp_test_LC) = paste("Ext_test_LC_", states, sep='')
+```
+
+LC:
+```{r,warning=FALSE}
+
+#Data
+mxt <- list()
+Ext <- list()
+
+#Models
+lc_svd <- list()
+
+#LC estimated parameters
+kappaSVD_dt_t <- list()
+alpha_x_dt <- list()
+beta_x_dt <- list()
+
+#Parameters
+min_year <- 1969
+max_year <- 2019
+
+min_age <- 0
+max_age <- 89
+
+nr <- (max_age-min_age+1)
+nc <- (train_test_border-min_year)
+
+for(i in 1:n){
+  
+ mxt[[i]] <- matrix(mx_train_LC[[i]]$mx,nrow = nr, ncol = nc)
+ Ext[[i]] <- matrix(exp_train_LC[[i]]$Pop, nrow = nr, ncol = nc)
+
+ 
+ #Build LC models
+ lc <- demogdata(mxt[[i]], Ext[[i]], min_age:max_age, min_year:(train_test_border-1), "mortality", "-", "Total")
+ lc_svd[[i]] <- lca(lc, adjust = "dt")
+ 
+ #Save parameters into vectors
+ kappaSVD_dt_t[[i]] <- as.vector(lc_svd[[i]]$kt)
+ alpha_x_dt[[i]] <- as.vector(lc_svd[[i]]$ax)
+ beta_x_dt[[i]] <- as.vector(lc_svd[[i]]$bx)
+}
+
+names(lc_svd) = paste("LC_SVD_", states[1:n], sep="")
+
+#plot(lc_svd[[10]])
+```
+
+
+Kappa vectors into long format
+```{r}
+
+kappa_df_base_LC_SVD_dt <- data.frame(matrix(ncol = n, nrow = length(kappaSVD_dt_t[[1]])))
+
+for (i in 1:n){
+  
+  kappa_df_base_LC_SVD_dt[,i] <- kappaSVD_dt_t[[i]]
+}
+
+colnames(kappa_df_base_LC_SVD_dt) <- states
+
+years <- seq(from = min_year_global, to = train_test_border-1, by = 1)
+kappa_df_LC_SVD_dt <- cbind(years, kappa_df_base_LC_SVD_dt)
+
+
+kappa_df_long_LC_SVD_dt <- data.frame(kt = unlist(kappa_df_base_LC_SVD_dt, use.names = FALSE))
+countr <- rep(states, length(years))
+
+kappa_df_long_LC_SVD_dt <- cbind(year = rep(years, n), states = sort(countr), kappa_df_long_LC_SVD_dt)
+```
+
+Check kappa t constraints. -- Ha van kiigazítás akkor sum kappa = 0 feltételnek nem kell teljesülnie! Ez csak a kiigazítatlan verziónál fontos.
+```{r}
+
+kappa_df_long_LC_SVD_dt %>%
+  group_by(states) %>%
+  summarize(sum_kt = sum(kt)) %>%
+  print(n = 50)
+```
+
+bx - Collect them into a data frame - Rows: years, Columns: Countires
+```{r}
+
+beta_df_base_LC <- data.frame(matrix(ncol = n, nrow = length(beta_x_dt[[1]])))
+
+for (i in 1:n){
+  
+  beta_df_base_LC[,i] <- beta_x_dt[[i]]
+}
+
+colnames(beta_df_base_LC) <- states
+
+ages <- seq(from = min_age, to = max_age, by = 1)
+beta_df_LC <- cbind(ages, beta_df_base_LC)
+```
+
+Transform the data frame into long format - This is ideal to panel models
+```{r}
+
+beta_df_long_LC <- data.frame(bx = unlist(beta_df_base_LC, use.names = FALSE))
+countr <- rep(states, length(ages))
+
+beta_df_long_LC_SVD_dt <- cbind(states = sort(countr), age = rep(ages, n), beta_df_long_LC)
+```
+
+Check beta x constraints. 
+```{r}
+
+beta_df_long_LC_SVD_dt %>%
+  group_by(states) %>%
+  summarize(sum_bx = sum(bx)) %>%
+  print(n = 50)
+```
+
+ax - Collect them into a data frame - Rows: years, Columns: Countires
+```{r}
+
+alpha_df_base_LC <- data.frame(matrix(ncol = n, nrow = length(alpha_x_dt[[1]])))
+
+for (i in 1:n){
+  
+  alpha_df_base_LC[,i] <- alpha_x_dt[[i]]
+}
+
+colnames(alpha_df_base_LC) <- states
+
+ages <- seq(from = min_age, to = max_age, by = 1)
+alpha_df_LC <- cbind(ages, alpha_df_base_LC)
+```
+
+Transform the data frame into long format - This is ideal to panel models
+```{r}
+
+alpha_df_long_LC <- data.frame(ax = unlist(alpha_df_base_LC, use.names = FALSE))
+countr <- rep(states, length(ages))
+
+alpha_df_long_LC_SVD_dt <- cbind(states = sort(countr), age = rep(ages, n), alpha_df_long_LC)
+```
+
+Save the parameters
+```{r}
+
+write.csv(kappa_df_long_LC_SVD_dt,
+          "~/Desktop/TDK/output/LeeCarter_SVD_Kappat_dt_Total.csv",
+          row.names=FALSE)
+
+write.csv(beta_df_long_LC_SVD_dt,
+          "~/Desktop/TDK/output/LeeCarter_bx_SVD_dt_Total.csv",
+          row.names=FALSE)
+
+write.csv(alpha_df_long_LC_SVD_dt,
+          "~/Desktop/TDK/output/LeeCarter_ax_SVD_dt_Total.csv",
+          row.names=FALSE)
+```
+

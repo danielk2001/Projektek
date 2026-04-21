@@ -1,0 +1,132 @@
+
+```{r}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(spdep)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+#Map coloured by having a spatial vs non-spatial winning FC method
+#Load df_minmax table regarding the LC or LL model from the robust model selection R file!
+
+world <- ne_states(country = "United States of America", returnclass = "sf")
+world <- world %>% filter(!(postal %in% c("AK", "HI", "DC")))
+
+names(df_minmax)[1:2] <- c("postal", "winner_model")
+
+spatial_models <- c("STARIMA", "ESTF", "SDPLM_QML", "SDPLM_GMM", "LSDPLM_GMM", "ENSEMBLE_SIMPLE_MEAN", "ENSEMBLE_TRIMMED_MEAN")
+nonspatial_models <- c("RWD", "ARIMA", "DPLM", "VAR")
+
+# helper to classify
+df_minmax <- df_minmax %>%
+  mutate(
+    winner_up = toupper(winner_model),
+    winner_type = case_when(
+      winner_up %in% toupper(spatial_models)   ~ "spatial",
+      winner_up %in% toupper(nonspatial_models) ~ "non-spatial",
+    )
+  )
+
+map_joined <- left_join(world %>% dplyr::select(postal, geometry),
+                        df_minmax %>% dplyr::select(postal, winner_model, winner_type),
+                        by = c("postal" = "postal"))
+map_sf <- st_as_sf(map_joined)
+map_sf <- map_sf %>%
+  mutate(
+    fill_type = case_when(
+      winner_type == "spatial" ~ "Spatial",
+      winner_type == "non-spatial" ~ "Non-spatial",
+      TRUE ~ "No match"
+    )
+  )
+
+fill_vals <- c("Spatial" = "red", "Non-spatial" = "blue", "No match" = "grey90")
+
+ggplot(map_sf) +
+  geom_sf(aes(fill = fill_type), color = "black", size = 0.2) +
+  scale_fill_manual(values = fill_vals, na.value = "grey90", drop = FALSE) +
+  labs(fill = "Winning method type") +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 12, face = "bold"),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  coord_sf(xlim = c(-130, -65), ylim = c(24, 50))
+```
+
+```{r}
+#Map coloured with each forecasting method having their own colour
+
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(spdep)   # for poly2nb, nb2listw, nb2mat
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(RColorBrewer)
+
+#Load df_minmax table regarding the LC or LL model from the robust model selection R file!
+world <- ne_states(country = "United States of America", returnclass = "sf")
+world <- world %>% filter(!(postal %in% c("AK", "HI", "DC")))
+
+names(df_minmax)[1:2] <- c("postal", "winner_model")
+
+df_minmax <- df_minmax %>%
+  mutate(
+    winner_up = toupper(winner_model),
+    canonical_model = case_when(
+      grepl("\\bSTARIMA\\b", winner_up) ~ "STARIMA",
+      grepl("\\bESTF\\b", winner_up) ~ "ESTF",
+      grepl("\\bLSDPLM_QML\\b", winner_up) ~ "LSDPLM_QML",
+      grepl("\\bSDPLM_QML\\b", winner_up) ~ "SDPLM_QML",
+      grepl("\\bSDPLM_GMM\\b", winner_up) ~ "SDPLM_GMM",
+      grepl("\\bLSDPLM_GMM\\b", winner_up) ~ "LSDPLM_GMM",
+      grepl("ENSEMBLE.*SIMPLE", winner_up) | grepl("ENSEMBLE_SIMPLE_MEAN", winner_up) ~ "Ensemble Simple Mean",
+      grepl("ENSEMBLE.*TRIM", winner_up) | grepl("ENSEMBLE_TRIMMED_MEAN", winner_up) ~ "Ensemble Trimmed Mean",
+      grepl("\\bRWD\\b", winner_up) ~ "RWD",
+      grepl("\\bARIMA\\b", winner_up) ~ "ARIMA",
+      grepl("\\bDPLM\\b", winner_up) ~ "DPLM",
+      grepl("\\bVAR\\b", winner_up) ~ "VAR"
+    )
+  )
+
+map_joined <- left_join(world %>% dplyr::select(postal, geometry),
+                        df_minmax %>% dplyr::select(postal, canonical_model),
+                        by = c("postal" = "postal"))
+
+map_sf <- st_as_sf(map_joined)
+
+fill_vals <- c(
+  "RWD" = "#E41A1C",            
+  "ARIMA" = "#377EB8",            
+  "VAR" = "#4DAF4A",              
+  "SDPLM_QML" = "#984EA3",        
+  "SDPLM_GMM" = "#FF7F00",        
+  "LSDPLM_GMM" = "#7FFF00",     
+  "STARIMA" = "#A65628",          
+  "DPLM" = "#00CED1",             
+  "ESTF" = "#FF1493",             
+  "Ensemble Simple Mean" = "blue",   
+  "Ensemble Trimmed Mean" = "lightgreen" 
+)
+
+ggplot(map_sf) +
+  geom_sf(aes(fill = canonical_model), color = "black", size = 0.2) +
+  scale_fill_manual(values = fill_vals, na.value = "grey90", drop = FALSE) +
+  labs(fill = "Winning forecasting method type") +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 12, face = "bold"),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  coord_sf(xlim = c(-130, -65), ylim = c(24, 50))
+
+```
+
+
+
